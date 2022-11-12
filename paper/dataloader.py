@@ -27,6 +27,7 @@ class DatasetMetaQA(Dataset):
     def __len__(self):
         return len(self.data)
 
+    # answer 이 여러 개인 경우 해당 idx들을 모두 1로 변환
     def toOneHot(self, indices):
         indices = torch.LongTensor(indices)
         batch_size = len(indices)
@@ -36,6 +37,9 @@ class DatasetMetaQA(Dataset):
         one_hot.scatter_(0, indices, 1)
         return one_hot
 
+    # question text > question ids
+    # head text > head id
+    # tail text > tail onehot ids 
     def __getitem__(self, index):
         data_point = self.data[index]
         question_text = data_point[1]
@@ -50,6 +54,12 @@ class DatasetMetaQA(Dataset):
 
 
 
+# 각 minimatch 별로 question ids 의 길이별로 sorting 후
+# max_len 값 계산 후 
+# output1 (inputs): question ids > entity ids (batch, longest_sample)
+# output2 (input_lengths): 각 input 의 question ids 길이
+# output3 (p_head): 각 input 의 head entity id
+# output4 (p_tail): 각 input 의 answer onehot matrix
 
 def _collate_fn(batch):
     sorted_seq = sorted(batch, key=lambda sample: len(sample[0]), reverse=True)

@@ -174,6 +174,8 @@ class RelationExtractor(nn.Module):
         return pred
 
     def ComplEx(self, head, relation):
+
+        # head 에 대한 embedding 차원을 반으로 나누어서 re_head / im_head 로 사용
         head = torch.stack(list(torch.chunk(head, 2, dim=1)), dim=1)
         head = self.bn0(head)
         head = self.ent_dropout(head)
@@ -182,12 +184,18 @@ class RelationExtractor(nn.Module):
         re_head = head[0]
         im_head = head[1]
 
+        # relation 에 대한 embedding 차원을 반으로 나누어서 re_relation / im_relation으로 사용
         re_relation, im_relation = torch.chunk(relation, 2, dim=1)
+
+        # entity embedding weight 의 절반은 re, 나머지 절반은 im 으로 나누어서 사용
+        # (num_words, embedding dim) -> (num_words, embedding_dim/2)
         re_tail, im_tail = torch.chunk(self.embedding.weight, 2, dim =1)
 
+        # re: 실수, im: 허수 부분 나누어서 계산 -> 이해 잘 안됨..
         re_score = re_head * re_relation - im_head * im_relation
         im_score = re_head * im_relation + im_head * re_relation
 
+        # head - relation score 계산
         score = torch.stack([re_score, im_score], dim=1)
         score = self.bn2(score)
         score = self.score_dropout(score)
@@ -195,6 +203,7 @@ class RelationExtractor(nn.Module):
 
         re_score = score[0]
         im_score = score[1]
+        # head - relation - tail score 계산 후 sigmoid
         score = torch.mm(re_score, re_tail.transpose(1,0)) + torch.mm(im_score, im_tail.transpose(1,0))
         pred = torch.sigmoid(score)
         return pred
@@ -248,18 +257,28 @@ class RelationExtractor(nn.Module):
         return pred
     
     def forward(self, sentence, p_head, p_tail, question_len):
+
+        # question ids 에 대한 embedding layer
         embeds = self.word_embeddings(sentence)
+
+        # pack_padded_seauence는 padding 처리된 데이터에 대해서는 계산하지 않으므로 더 효율적으로 학습 가능 
+        # (batch, max_len) -> (total question ids) -> (batch, max_len) 
         # question_len must be on the CPU if provided as a tensor
         packed_output = pack_padded_sequence(embeds, question_len.to('cpu'), batch_first=True)
         outputs, (hidden, cell_state) = self.GRU(packed_output)
         outputs, outputs_length = pad_packed_sequence(outputs, batch_first=True)
+        # concatenate forward, backward gru hidden state 
+        # 어차피 hidden state 쓸거면 위에서 output shape 은 왜 다시 맞춰준거지..?
         outputs = torch.cat([hidden[0,:,:], hidden[1,:,:]], dim=-1)
-        # outputs = self.drop1(outputs)
-        # rel_embedding = self.hidden2rel(outputs)
+        
+        # relation, head에 대해서 embedding 적용
         rel_embedding = self.applyNonLinear(outputs)
         p_head = self.embedding(p_head)
+
+        # head - relation - tail 에 대한 score 계산
         pred = self.getScores(p_head, rel_embedding)
         actual = p_tail
+
         if self.label_smoothing:
             actual = ((1.0-self.label_smoothing)*actual) + (1.0/actual.size(1)) 
         loss = self.loss(pred, actual)
@@ -283,6 +302,7 @@ class RelationExtractor(nn.Module):
         rel_embedding = self.applyNonLinear(outputs)
         return rel_embedding
 
+    # model 의 forward 와 동일한 과정이지만, top k 결과를 제공해준다.
     def get_score_ranked(self, head, sentence, sent_len):
         embeds = self.word_embeddings(sentence.unsqueeze(0))
         packed_output = pack_padded_sequence(embeds, sent_len, batch_first=True)
